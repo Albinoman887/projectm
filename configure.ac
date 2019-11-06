@@ -106,21 +106,21 @@ AS_IF([test "x$enable_emscripten" != "xyes"], [
 
 
 # Threading
-AC_ARG_ENABLE([threading],
-AS_HELP_STRING([--enable-threading], [multhreading]),
-[], [enable_threading=yes])
-AS_IF([test "x$enable_threading" = "xyes" && ! test "$EMSCRIPTEN"], [
-  m4_include([m4/autoconf-archive/ax_pthread.m4])
-  AX_PTHREAD([
-    AC_DEFINE([USE_THREADS], [1], [Define USE_THREADS])
-    LIBS="$LIBS $PTHREAD_LIBS $PTHREAD_CFLAGS"
-    CFLAGS="$CFLAGS $PTHREAD_CFLAGS"
-    CXXFLAGS="$CXXFLAGS $PTHREAD_CFLAGS"
-    echo "LIBS=$LIBS"
-  ], [
-    AC_MSG_ERROR([pthreads not found])
-  ])
-])
+#AC_ARG_ENABLE([threading],
+#AS_HELP_STRING([--enable-threading], [multhreading]),
+#[], [enable_threading=yes])
+#AS_IF([test "x$enable_threading" = "xyes" && ! test "$EMSCRIPTEN"], [
+ # m4_include([m4/autoconf-archive/ax_pthread.m4])
+ # AX_PTHREAD([
+  #  AC_DEFINE([USE_THREADS], [1], [Define USE_THREADS])
+   # LIBS="$LIBS $PTHREAD_LIBS $PTHREAD_CFLAGS"
+   # CFLAGS="$CFLAGS $PTHREAD_CFLAGS"
+   # CXXFLAGS="$CXXFLAGS $PTHREAD_CFLAGS"
+   # echo "LIBS=$LIBS"
+ # ], [
+  #  AC_MSG_ERROR([pthreads not found])
+ # ])
+#])
 
 AC_ARG_ENABLE([gles],
   AS_HELP_STRING([--enable-gles], [OpenGL ES support]),
