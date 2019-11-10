@@ -241,8 +241,7 @@ void stbi_decode_DXT_color_block(
 }
 
 static int stbi__dds_info( stbi__context *s, int *x, int *y, int *comp, int *iscompressed ) {
-    unsigned int flags;
-    int is_compressed,has_alpha;
+	int flags,is_compressed,has_alpha;
 	DDS_header header={0};
 
 	if( sizeof( DDS_header ) != 128 )
@@ -337,14 +336,13 @@ int stbi__dds_info_from_file(FILE *f,                  int *x, int *y, int *comp
 }
 #endif
 
-static stbi_uc * stbi__dds_load(stbi__context *s, int *x, int *y, int *comp, int req_comp)
+static void * stbi__dds_load(stbi__context *s, int *x, int *y, int *comp, int req_comp)
 {
 	//	all variables go up front
 	stbi_uc *dds_data = NULL;
 	stbi_uc block[16*4];
 	stbi_uc compressed[8];
-    unsigned int flags;
-    int DXT_family;
+	int flags, DXT_family;
 	int has_alpha, has_mipmap;
 	int is_compressed, cubemap_faces;
 	int block_pitch, num_blocks;
@@ -558,16 +556,16 @@ static stbi_uc * stbi__dds_load(stbi__context *s, int *x, int *y, int *comp, int
 }
 
 #ifndef STBI_NO_STDIO
-stbi_uc *stbi__dds_load_from_file   (FILE *f,                  int *x, int *y, int *comp, int req_comp)
+void *stbi__dds_load_from_file   (FILE *f,                  int *x, int *y, int *comp, int req_comp)
 {
 	stbi__context s;
 	stbi__start_file(&s,f);
 	return stbi__dds_load(&s,x,y,comp,req_comp);
 }
 
-stbi_uc *stbi__dds_load_from_path             (const char *filename,           int *x, int *y, int *comp, int req_comp)
+void *stbi__dds_load_from_path             (const char *filename,           int *x, int *y, int *comp, int req_comp)
 {
-   stbi_uc *data;
+   void *data;
    FILE *f = fopen(filename, "rb");
    if (!f) return NULL;
    data = stbi__dds_load_from_file(f,x,y,comp,req_comp);
@@ -576,14 +574,14 @@ stbi_uc *stbi__dds_load_from_path             (const char *filename,           i
 }
 #endif
 
-stbi_uc *stbi__dds_load_from_memory (stbi_uc const *buffer, int len, int *x, int *y, int *comp, int req_comp)
+void *stbi__dds_load_from_memory (stbi_uc const *buffer, int len, int *x, int *y, int *comp, int req_comp)
 {
 	stbi__context s;
    stbi__start_mem(&s,buffer, len);
    return stbi__dds_load(&s,x,y,comp,req_comp);
 }
 
-stbi_uc *stbi__dds_load_from_callbacks (stbi_io_callbacks const *clbk, void *user, int *x, int *y, int *comp, int req_comp)
+void *stbi__dds_load_from_callbacks (stbi_io_callbacks const *clbk, void *user, int *x, int *y, int *comp, int req_comp)
 {
 	stbi__context s;
    stbi__start_callbacks(&s, (stbi_io_callbacks *) clbk, user);

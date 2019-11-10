@@ -24,7 +24,7 @@
 	- TGA		load & save
 	- DDS		load & save
 	- PNG		load & save
-	- JPG		load
+	- JPG		load & save
 	- PSD		load
 	- HDR		load
 	- PIC		load
@@ -112,7 +112,8 @@ enum
 	SOIL_FLAG_TEXTURE_RECTANGLE = 512,
 	SOIL_FLAG_PVR_LOAD_DIRECT = 1024,
 	SOIL_FLAG_ETC1_LOAD_DIRECT = 2048,
-	SOIL_FLAG_GL_MIPMAPS = 4096
+	SOIL_FLAG_GL_MIPMAPS = 4096,
+	SOIL_FLAG_SRGB_COLOR_SPACE = 8192
 };
 
 /**
@@ -127,7 +128,8 @@ enum
 	SOIL_SAVE_TYPE_TGA = 0,
 	SOIL_SAVE_TYPE_BMP = 1,
 	SOIL_SAVE_TYPE_PNG = 2,
-	SOIL_SAVE_TYPE_DDS = 3
+	SOIL_SAVE_TYPE_DDS = 3,
+	SOIL_SAVE_TYPE_JPG = 4
 };
 
 /**
@@ -166,9 +168,8 @@ unsigned int
 		const char *filename,
 		int force_channels,
 		unsigned int reuse_texture_ID,
-        unsigned int flags,
-        int *width,
-        int *height);
+		unsigned int flags
+	);
 
 /**
 	Loads 6 images from disk into an OpenGL cubemap texture.
@@ -245,14 +246,13 @@ unsigned int
 **/
 unsigned int
 	SOIL_load_OGL_texture_from_memory
-    (const unsigned char *const buffer,
-        unsigned int buffer_length,
-        int force_channels,
-        unsigned int reuse_texture_ID,
-        unsigned int flags,
-        int * width,
-        int * height
-    );
+	(
+		const unsigned char *const buffer,
+		int buffer_length,
+		int force_channels,
+		unsigned int reuse_texture_ID,
+		unsigned int flags
+	);
 
 /**
 	Loads 6 images from memory into an OpenGL cubemap texture.
@@ -405,8 +405,19 @@ unsigned char*
 
 /**
 	Saves an image from an array of unsigned chars (RGBA) to disk
+	\param quality parameter only used for SOIL_SAVE_TYPE_JPG files, values accepted between 0 and 100.
 	\return 0 if failed, otherwise returns 1
 **/
+int
+	SOIL_save_image_quality
+	(
+		const char *filename,
+		int image_type,
+		int width, int height, int channels,
+		const unsigned char *const data,
+		int quality
+	);
+
 int
 	SOIL_save_image
 	(
@@ -462,7 +473,7 @@ unsigned int SOIL_direct_load_DDS(
 /** Loads the DDS texture directly to the GPU memory ( if supported ) */
 unsigned int SOIL_direct_load_DDS_from_memory(
 		const unsigned char *const buffer,
-        unsigned int buffer_length,
+		int buffer_length,
 		unsigned int reuse_texture_ID,
 		int flags,
 		int loading_as_cubemap );

@@ -72,16 +72,6 @@
 	#include <windows.h>
 	#include <wingdi.h>
 	#include <GL/gl.h>
-	
-	#ifndef GL_UNSIGNED_SHORT_4_4_4_4
-	#define GL_UNSIGNED_SHORT_4_4_4_4 0x8033
-	#endif
-	#ifndef GL_UNSIGNED_SHORT_5_5_5_1
-	#define GL_UNSIGNED_SHORT_5_5_5_1 0x8034
-	#endif
-	#ifndef GL_UNSIGNED_SHORT_5_6_5
-	#define GL_UNSIGNED_SHORT_5_6_5 0x8363
-	#endif
 #elif defined(__APPLE__) || defined(__APPLE_CC__)
 	/*	I can't test this Apple stuff!	*/
 	#include <OpenGL/gl.h>
@@ -97,11 +87,25 @@
 #endif
 
 #ifndef GL_BGRA
-#define GL_BGRA                                             0x80E1
+#define GL_BGRA 0x80E1
 #endif
 
 #ifndef GL_RG
-#define GL_RG                             0x8227
+#define GL_RG 0x8227
+#endif
+
+#ifndef GL_UNSIGNED_SHORT_4_4_4_4
+#define GL_UNSIGNED_SHORT_4_4_4_4 0x8033
+#endif
+#ifndef GL_UNSIGNED_SHORT_5_5_5_1
+#define GL_UNSIGNED_SHORT_5_5_5_1 0x8034
+#endif
+#ifndef GL_UNSIGNED_SHORT_5_6_5
+#define GL_UNSIGNED_SHORT_5_6_5 0x8363
+#endif
+
+#ifndef GL_UNSIGNED_BYTE_3_3_2
+#define GL_UNSIGNED_BYTE_3_3_2 0x8032
 #endif
 
 #include "SOIL2.h"
@@ -113,6 +117,7 @@
 #include "image_DXT.h"
 #include "pvr_helper.h"
 #include "pkm_helper.h"
+#include "jo_jpeg.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -154,10 +159,16 @@ int query_tex_rectangle_capability( void );
 /*	for using DXT compression	*/
 static int has_DXT_capability = SOIL_CAPABILITY_UNKNOWN;
 int query_DXT_capability( void );
+#define SOIL_GL_SRGB			0x8C40
+#define SOIL_GL_SRGB_ALPHA		0x8C42
 #define SOIL_RGB_S3TC_DXT1		0x83F0
 #define SOIL_RGBA_S3TC_DXT1		0x83F1
 #define SOIL_RGBA_S3TC_DXT3		0x83F2
 #define SOIL_RGBA_S3TC_DXT5		0x83F3
+#define SOIL_GL_COMPRESSED_SRGB_S3TC_DXT1_EXT  0x8C4C
+#define SOIL_GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT 0x8C4F
+static int has_sRGB_capability = SOIL_CAPABILITY_UNKNOWN;
+int query_sRGB_capability( void );
 typedef void (APIENTRY * P_SOIL_GLCOMPRESSEDTEXIMAGE2DPROC) (GLenum target, GLint level, GLenum internalformat, GLsizei width, GLsizei height, GLint border, GLsizei imageSize, const GLvoid * data);
 static P_SOIL_GLCOMPRESSEDTEXIMAGE2DPROC soilGlCompressedTexImage2D = NULL;
 
@@ -200,6 +211,7 @@ static int isAtLeastGL3()
 #endif
 
 #ifdef SOIL_PLATFORM_WIN32
+static HMODULE openglModule = NULL;
 static int soilTestWinProcPointer(const PROC pTest)
 {
 	ptrdiff_t iTest;
@@ -207,6 +219,27 @@ static int soilTestWinProcPointer(const PROC pTest)
 	iTest = (ptrdiff_t)pTest;
 	if(iTest == 1 || iTest == 2 || iTest == 3 || iTest == -1) return 0;
 	return 1;
+}
+#endif
+
+#if defined(__sgi) || defined (__sun) || defined(__HAIKU__)
+#include <dlfcn.h>
+
+void* dlGetProcAddress (const char* name)
+{
+  static void* h = NULL;
+  static void* gpa;
+
+  if (h == NULL)
+  {
+	if ((h = dlopen(NULL, RTLD_LAZY | RTLD_LOCAL)) == NULL) return NULL;
+	gpa = dlsym(h, "glXGetProcAddress");
+  }
+
+  if (gpa != NULL)
+	return ((void*(*)(const GLubyte*))gpa)((const GLubyte*)name);
+  else
+	return dlsym(h, (const char*)name);
 }
 #endif
 
@@ -223,10 +256,15 @@ void * SOIL_GL_GetProcAddress(const char *proc)
 		func = NULL;
 	#endif
 #elif defined( SOIL_PLATFORM_WIN32 )
+	if ( NULL == openglModule )
+		openglModule = LoadLibraryA("opengl32.dll");
+
 	func =  wglGetProcAddress( proc );
 
-	if (!soilTestWinProcPointer((const PROC)func))
-		func = NULL;
+	if (!soilTestWinProcPointer((const PROC)func)) {
+		func = (void *)GetProcAddress(openglModule, proc);
+	}
+
 #elif defined( SOIL_PLATFORM_OSX )
 	/*	I can't test this Apple stuff!	*/
 	CFBundleRef bundle;
@@ -257,6 +295,8 @@ void * SOIL_GL_GetProcAddress(const char *proc)
 	glXGetProcAddress
 #endif
 	( (const GLubyte *)proc );
+#elif defined(__sgi) || defined (__sun) || defined(__HAIKU__)
+	func = dlGetProcAddress(proc);
 #endif
 
 	return func;
@@ -364,14 +404,12 @@ unsigned int
 		const char *filename,
 		int force_channels,
 		unsigned int reuse_texture_ID,
-        unsigned int flags,
-        int *width,
-        int *height
+		unsigned int flags
 	)
 {
 	/*	variables	*/
 	unsigned char* img;
-    int channels;
+	int width, height, channels;
 	unsigned int tex_id;
 	/*	does the user want direct uploading of the image as a DDS file?	*/
 	if( flags & SOIL_FLAG_DDS_LOAD_DIRECT )
@@ -409,7 +447,7 @@ unsigned int
 	}
 
 	/*	try to load the image	*/
-    img = SOIL_load_image( filename, width, height, &channels, force_channels );
+	img = SOIL_load_image( filename, &width, &height, &channels, force_channels );
 	/*	channels holds the original number of channels, which may have been forced	*/
 	if( (force_channels >= 1) && (force_channels <= 4) )
 	{
@@ -423,7 +461,7 @@ unsigned int
 	}
 	/*	OK, make it a texture!	*/
 	tex_id = SOIL_internal_create_OGL_texture(
-            img, width, height, channels,
+			img, &width, &height, channels,
 			reuse_texture_ID, flags,
 			GL_TEXTURE_2D, GL_TEXTURE_2D,
 			GL_MAX_TEXTURE_SIZE );
@@ -495,17 +533,15 @@ unsigned int
 	SOIL_load_OGL_texture_from_memory
 	(
 		const unsigned char *const buffer,
-        unsigned int buffer_length,
+		int buffer_length,
 		int force_channels,
 		unsigned int reuse_texture_ID,
-        unsigned int flags,
-        int * width,
-        int * height
+		unsigned int flags
 	)
 {
 	/*	variables	*/
 	unsigned char* img;
-    int channels;
+	int width, height, channels;
 	unsigned int tex_id;
 	/*	does the user want direct uploading of the image as a DDS file?	*/
 	if( flags & SOIL_FLAG_DDS_LOAD_DIRECT )
@@ -551,7 +587,7 @@ unsigned int
 	/*	try to load the image	*/
 	img = SOIL_load_image_from_memory(
 					buffer, buffer_length,
-                    width, height, &channels,
+					&width, &height, &channels,
 					force_channels );
 	/*	channels holds the original number of channels, which may have been forced	*/
 	if( (force_channels >= 1) && (force_channels <= 4) )
@@ -566,7 +602,7 @@ unsigned int
 	}
 	/*	OK, make it a texture!	*/
 	tex_id = SOIL_internal_create_OGL_texture(
-            img, width, height, channels,
+			img, &width, &height, channels,
 			reuse_texture_ID, flags,
 			GL_TEXTURE_2D, GL_TEXTURE_2D,
 			GL_MAX_TEXTURE_SIZE );
@@ -1417,6 +1453,7 @@ unsigned int
 	unsigned int tex_id;
 	unsigned int internal_texture_format = 0, original_texture_format = 0;
 	int DXT_mode = SOIL_CAPABILITY_UNKNOWN;
+	int sRGB_texture = query_sRGB_capability() == SOIL_CAPABILITY_PRESENT && ( flags & SOIL_FLAG_SRGB_COLOR_SPACE );;
 	int max_supported_size;
 	int iwidth = *width;
 	int iheight = *height;
@@ -1640,14 +1677,27 @@ unsigned int
 				if( (channels & 1) == 1 )
 				{
 					/*	1 or 3 channels = DXT1	*/
-					internal_texture_format = SOIL_RGB_S3TC_DXT1;
+					internal_texture_format = sRGB_texture ? SOIL_GL_COMPRESSED_SRGB_S3TC_DXT1_EXT : SOIL_RGB_S3TC_DXT1;
 				} else
 				{
 					/*	2 or 4 channels = DXT5	*/
-					internal_texture_format = SOIL_RGBA_S3TC_DXT5;
+					internal_texture_format = sRGB_texture ? SOIL_GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT : SOIL_RGBA_S3TC_DXT5;
 				}
 			}
 		}
+		else if ( sRGB_texture )
+		{
+			switch( channels )
+			{
+			case 3:
+				internal_texture_format = SOIL_GL_SRGB;
+				break;
+			case 4:
+				internal_texture_format = SOIL_GL_SRGB_ALPHA;
+				break;
+			}
+		}
+
 		/*  bind an OpenGL texture ID	*/
 		glBindTexture( opengl_texture_type, tex_id );
 		check_for_GL_errors( "glBindTexture" );
@@ -1777,6 +1827,7 @@ int
 	unsigned char *pixel_data;
 	int i, j;
 	int save_result;
+	GLint pack_aligment;
 
 	/*	error checks	*/
 	if( (width < 1) || (height < 1) )
@@ -1795,9 +1846,20 @@ int
 		return 0;
 	}
 
+	glGetIntegerv(GL_PACK_ALIGNMENT, &pack_aligment);
+	if ( 1 != pack_aligment )
+	{
+		glPixelStorei(GL_PACK_ALIGNMENT,1);
+	}
+
 	/*  Get the data from OpenGL	*/
 	pixel_data = (unsigned char*)malloc( 3*width*height );
 	glReadPixels (x, y, width, height, GL_RGB, GL_UNSIGNED_BYTE, pixel_data);
+
+	if ( 1 != pack_aligment )
+	{
+		glPixelStorei(GL_PACK_ALIGNMENT, pack_aligment);
+	}
 
 	/*	invert the image	*/
 	for( j = 0; j*2 < height; ++j )
@@ -1865,6 +1927,7 @@ unsigned char*
 	return result;
 }
 
+
 int
 	SOIL_save_image
 	(
@@ -1872,6 +1935,19 @@ int
 		int image_type,
 		int width, int height, int channels,
 		const unsigned char *const data
+	)
+{
+	return SOIL_save_image_quality( filename, image_type, width, height, channels, data, 80 );
+}
+
+int
+	SOIL_save_image_quality
+	(
+		const char *filename,
+		int image_type,
+		int width, int height, int channels,
+		const unsigned char *const data,
+		int quality
 	)
 {
 	int save_result;
@@ -1904,6 +1980,11 @@ int
 		save_result = stbi_write_png( filename,
 				width, height, channels, (const unsigned char *const)data, 0 );
 	} else
+	if ( image_type == SOIL_SAVE_TYPE_JPG )
+	{
+		save_result = jo_write_jpg( filename, (const void*)data, width, height, channels, quality );
+	}
+	else
 	{
 		save_result = 0;
 	}
@@ -1939,7 +2020,7 @@ const char*
 
 unsigned int SOIL_direct_load_DDS_from_memory(
 		const unsigned char *const buffer,
-		unsigned int buffer_length,
+		int buffer_length,
 		unsigned int reuse_texture_ID,
 		int flags,
 		int loading_as_cubemap )
@@ -1958,6 +2039,7 @@ unsigned int SOIL_direct_load_DDS_from_memory(
 	unsigned int flag;
 	unsigned int cf_target, ogl_target_start, ogl_target_end;
 	unsigned int opengl_texture_type;
+	unsigned int format_type = GL_UNSIGNED_BYTE;
 	int i;
 	/*	1st off, does the filename even exist?	*/
 	if( NULL == buffer )
@@ -1989,7 +2071,7 @@ unsigned int SOIL_direct_load_DDS_from_memory(
 		uncompressed.  Some DDS writers do not conform to the
 		spec, so I need to make my reader more tolerant	*/
 	/*	I need one of these	*/
-	flag = DDPF_FOURCC | DDPF_RGB;
+	flag = DDPF_FOURCC | DDPF_RGB | DDPF_LUMINANCE;
 	if( (header.sPixelFormat.dwFlags & flag) == 0 ) {goto quick_exit;}
 	if( header.sPixelFormat.dwSize != 32 ) {goto quick_exit;}
 	if( (header.sCaps.dwCaps1 & DDSCAPS_TEXTURE) == 0 ) {goto quick_exit;}
@@ -2011,12 +2093,61 @@ unsigned int SOIL_direct_load_DDS_from_memory(
 	cubemap = (header.sCaps.dwCaps2 & DDSCAPS2_CUBEMAP) / DDSCAPS2_CUBEMAP;
 	if( uncompressed )
 	{
-		S3TC_type = GL_RGB;
-		block_size = 3;
-		if( header.sPixelFormat.dwFlags & DDPF_ALPHAPIXELS )
+		if ( header.sPixelFormat.dwRGBBitCount == 8 )
 		{
-			S3TC_type = GL_RGBA;
-			block_size = 4;
+			if ( (header.sPixelFormat.dwRBitMask == 0xe0) &&
+				 (header.sPixelFormat.dwGBitMask == 0x1c) &&
+				 (header.sPixelFormat.dwBBitMask == 0x3))
+			{
+				S3TC_type = GL_RGB;
+				format_type = GL_UNSIGNED_BYTE_3_3_2;
+				block_size = 1;
+			} else
+			{
+				S3TC_type = GL_LUMINANCE;
+				block_size = 1;
+			}
+		} else if ( header.sPixelFormat.dwRGBBitCount == 16 )
+		{
+			if ( (header.sPixelFormat.dwRBitMask == 0xf800) &&
+				 (header.sPixelFormat.dwGBitMask == 0x7e0) &&
+				 (header.sPixelFormat.dwBBitMask == 0x1f))
+			{
+				//DXGI_FORMAT_B5G6R5_UNORM
+				S3TC_type = GL_RGBA;
+				format_type = GL_UNSIGNED_SHORT_5_5_5_1;
+				block_size = 2;
+			} else if ( (header.sPixelFormat.dwRBitMask == 0xf00) &&
+				 (header.sPixelFormat.dwGBitMask == 0xf0) &&
+				 (header.sPixelFormat.dwBBitMask == 0xf) &&
+				 (header.sPixelFormat.dwAlphaBitMask == 0xf000))
+			{
+				//D3DFMT_A4R4G4B4
+				S3TC_type = GL_RGBA;
+				format_type = GL_UNSIGNED_SHORT_4_4_4_4;
+				block_size = 2;
+			} else if ( (header.sPixelFormat.dwRBitMask == 0x7c00) &&
+				 (header.sPixelFormat.dwGBitMask == 0x3e0) &&
+				 (header.sPixelFormat.dwBBitMask == 0x1f))
+			{
+				//DXGI_FORMAT_B5G5R5A1_UNORM
+				S3TC_type = GL_RGBA;
+				format_type = GL_UNSIGNED_SHORT_5_5_5_1;
+				block_size = 2;
+			} else
+			{
+				S3TC_type = GL_RG;
+				block_size = 2;
+			}
+		} else
+		{
+			S3TC_type = GL_RGB;
+			block_size = 3;
+			if( header.sPixelFormat.dwFlags & DDPF_ALPHAPIXELS )
+			{
+				S3TC_type = GL_RGBA;
+				block_size = 4;
+			}
 		}
 		DDS_main_size = width * height * block_size;
 	} else
@@ -2080,23 +2211,13 @@ unsigned int SOIL_direct_load_DDS_from_memory(
 	}
 	if( (header.sCaps.dwCaps1 & DDSCAPS_MIPMAP) && (header.dwMipMapCount > 1) )
 	{
-		int shift_offset;
 		mipmaps = header.dwMipMapCount - 1;
 		DDS_full_size = DDS_main_size;
-		if( uncompressed )
-		{
-			/*	uncompressed DDS, simple MIPmap size calculation	*/
-			shift_offset = 0;
-		} else
-		{
-			/*	compressed DDS, MIPmap size calculation is block based	*/
-			shift_offset = 2;
-		}
 		for( i = 1; i <= mipmaps; ++ i )
 		{
 			int w, h;
-			w = width >> (shift_offset + i);
-			h = height >> (shift_offset + i);
+			w = width >> i;
+			h = height >> i;
 			if( w < 1 )
 			{
 				w = 1;
@@ -2105,7 +2226,15 @@ unsigned int SOIL_direct_load_DDS_from_memory(
 			{
 				h = 1;
 			}
-			DDS_full_size += w*h*block_size;
+			if ( uncompressed )
+			{
+				/*	uncompressed DDS, simple MIPmap size calculation	*/
+				DDS_full_size += w*h*block_size;
+			} else
+			{
+				/*	compressed DDS, MIPmap size calculation is block based	*/
+				DDS_full_size += ((w+3)/4)*((h+3)/4)*block_size;
+			}
 		}
 	} else
 	{
@@ -2124,7 +2253,7 @@ unsigned int SOIL_direct_load_DDS_from_memory(
 	/*	do this for each face of the cubemap!	*/
 	for( cf_target = ogl_target_start; cf_target <= ogl_target_end; ++cf_target )
 	{
-		if( buffer_index + DDS_full_size <= buffer_length )
+		if( buffer_index + DDS_full_size <= (unsigned int)buffer_length )
 		{
 			unsigned int byte_offset = DDS_main_size;
 			memcpy( (void*)DDS_data, (const void*)(&buffer[buffer_index]), DDS_full_size );
@@ -2132,18 +2261,54 @@ unsigned int SOIL_direct_load_DDS_from_memory(
 			/*	upload the main chunk	*/
 			if( uncompressed )
 			{
-				/*	and remember, DXT uncompressed uses BGR(A),
-					so swap to RGB(A) for ALL MIPmap levels	*/
-				for( i = 0; i < (int)DDS_full_size; i += block_size )
+				if ( (header.sPixelFormat.dwRBitMask == 0xff0000) && ( ( block_size == 3 && S3TC_type == GL_RGB ) || ( block_size == 4 && S3TC_type == GL_RGBA ) ) )
 				{
-					unsigned char temp = DDS_data[i];
-					DDS_data[i] = DDS_data[i+2];
-					DDS_data[i+2] = temp;
+					for( i = 0; i < (int)DDS_full_size; i += block_size )
+					{
+						unsigned char temp = DDS_data[i];
+						DDS_data[i] = DDS_data[i+2];
+						DDS_data[i+2] = temp;
+					}
+				} else if ( block_size == 2 &&
+							(header.sPixelFormat.dwRBitMask == 0xf800 || header.sPixelFormat.dwRBitMask == 0x7c00) )
+				{
+					// convert to R5G5B5A1
+					for( i = 0; i < (int)DDS_full_size; i += block_size )
+					{
+						unsigned short pixel = DDS_data[i] << 0 | DDS_data[i+1] << 8;
+						char r = ((pixel & header.sPixelFormat.dwRBitMask) >> 10);
+						char g = ((pixel & header.sPixelFormat.dwGBitMask) >> 5);
+						char b = ((pixel & header.sPixelFormat.dwBBitMask) >> 0);
+						char a = 1;
+						if ( header.sPixelFormat.dwAlphaBitMask != 0 ) {
+							a = (pixel & header.sPixelFormat.dwAlphaBitMask) >> 15;
+						}
+						unsigned short pixel_new = (r << 11) | (g << 6) | (b << 1) | a;
+						DDS_data[i] = (pixel_new >> 0) & 0xff;
+						DDS_data[i+1] = (pixel_new >> 8) & 0xff;
+					}
+				} else if ( block_size == 2 &&
+							(header.sPixelFormat.dwRBitMask == 0xf00) &&
+							(header.sPixelFormat.dwGBitMask == 0xf0) &&
+							(header.sPixelFormat.dwBBitMask == 0xf) &&
+							(header.sPixelFormat.dwAlphaBitMask == 0xf000))
+				{
+					for( i = 0; i < (int)DDS_full_size; i += block_size )
+					{
+						unsigned short pixel = DDS_data[i] << 0 | DDS_data[i+1] << 8;
+						char r = ((pixel & header.sPixelFormat.dwRBitMask) >> 8);
+						char g = ((pixel & header.sPixelFormat.dwGBitMask) >> 4);
+						char b = ((pixel & header.sPixelFormat.dwBBitMask) >> 0);
+						char a = ((pixel & header.sPixelFormat.dwAlphaBitMask) >> 12);
+						unsigned short pixel_new = (r << 12) | (g << 8) | (b << 4) | a;
+						DDS_data[i] = (pixel_new >> 0) & 0xff;
+						DDS_data[i+1] = (pixel_new >> 8) & 0xff;
+					}
 				}
 				glTexImage2D(
 					cf_target, 0,
 					S3TC_type, width, height, 0,
-					S3TC_type, GL_UNSIGNED_BYTE, DDS_data );
+					S3TC_type, format_type, DDS_data );
 			} else
 			{
 				soilGlCompressedTexImage2D(
@@ -2172,7 +2337,7 @@ unsigned int SOIL_direct_load_DDS_from_memory(
 					glTexImage2D(
 						cf_target, i,
 						S3TC_type, w, h, 0,
-						S3TC_type, GL_UNSIGNED_BYTE, &DDS_data[byte_offset] );
+						S3TC_type, format_type, &DDS_data[byte_offset] );
 				} else
 				{
 					mip_size = ((w+3)/4)*((h+3)/4)*block_size;
@@ -2753,6 +2918,10 @@ int query_NPOT_capability( void )
 			/*	it's there!	*/
 			has_NPOT_capability = SOIL_CAPABILITY_PRESENT;
 		}
+
+		#if defined( __emscripten__ ) || defined( EMSCRIPTEN )
+		has_NPOT_capability = SOIL_CAPABILITY_PRESENT;
+		#endif
 	}
 	/*	let the user know if we can do non-power-of-two textures or not	*/
 	return has_NPOT_capability;
@@ -2918,6 +3087,29 @@ int query_BGRA8888_capability( void )
 	return has_BGRA8888_capability;
 }
 
+int query_sRGB_capability( void )
+{
+	if ( has_sRGB_capability == SOIL_CAPABILITY_UNKNOWN )
+	{
+		if (0 == SOIL_GL_ExtensionSupported(
+				"GL_EXT_texture_sRGB" )
+				&&
+			0 == SOIL_GL_ExtensionSupported(
+				"GL_EXT_sRGB" )
+				&&
+			0 == SOIL_GL_ExtensionSupported(
+				"EXT_sRGB" ) )
+		{
+			has_sRGB_capability = SOIL_CAPABILITY_NONE;
+		} else
+		{
+			has_sRGB_capability = SOIL_CAPABILITY_PRESENT;
+		}
+	}
+
+	return has_sRGB_capability;
+}
+
 int query_ETC1_capability( void )
 {
 	/*	check for the capability	*/
@@ -2971,6 +3163,15 @@ int query_gen_mipmap_capability( void )
 			if(ext_addr == NULL)
 			{
 				ext_addr = (P_SOIL_GLGENERATEMIPMAPPROC)SOIL_GL_GetProcAddress("glGenerateMipmapEXT");
+			}
+
+			#elif !defined( SOIL_NO_EGL )
+
+			ext_addr = (P_SOIL_GLGENERATEMIPMAPPROC)SOIL_GL_GetProcAddress("glGenerateMipmapOES");
+
+			if(ext_addr == NULL)
+			{
+				ext_addr = (P_SOIL_GLGENERATEMIPMAPPROC)SOIL_GL_GetProcAddress("glGenerateMipmap");
 			}
 
 			#elif defined( SOIL_GLES2 )
